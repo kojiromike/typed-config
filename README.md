@@ -1,6 +1,7 @@
 # typed-config 
 
-![Test Status Badge](https://github.com/kojiromike/typed-config/workflows/Run%20Tox%20Tests/badge.svg)
+![Doctests Status Badge](https://github.com/kojiromike/typed-config/workflows/doctests/badge.svg)
+![Mypy Status Badge](https://github.com/kojiromike/typed-config/workflows/mypy/badge.svg)
 
 ## Automatically build Python configuration structures from type annotations
 
@@ -112,4 +113,29 @@ But can still be optional or have defaults:
 (True, [4, 100, 12])
 >>>
 """
+```
+
+Names starting with underscores are ignored:
+
+```python
+>>> class IgnoredValueConfig(TypedConfig):
+...     SOMETHING: str = 'hi'
+...     _NOTHING: int
+>>> i = IgnoredValueConfig()
+>>> hasattr(i, '._NOTHING')
+False
+>>>
+```
+
+You can provide additional casts for types by extending the casts mapping:
+
+```python
+>>> import pathlib as p, base64
+>>> class PathConfig(TypedConfig):
+...     SOMEWHERE: p.Path = '/tmp'
+...     BIN64: bytes = 'aGVsbG8gd29ybGQ='
+>>> c = PathConfig({p.Path: p.Path, bytes: lambda s: base64.b64decode(str.encode(s))})
+>>> c.SOMEWHERE.name, c.BIN64
+('tmp', b'hello world')
+>>>
 ```

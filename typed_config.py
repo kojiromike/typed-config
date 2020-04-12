@@ -79,57 +79,86 @@ But can still be optional or have defaults:
 >>> c = DefaultListConfig()
 >>> c.MAYBE_STRINGS is None, c.INTEGERS
 (True, [4, 100, 12])
+
+Names starting with underscores are ignored:
+
+>>> class IgnoredValueConfig(TypedConfig):
+...     SOMETHING: str = 'hi'
+...     _NOTHING: int
+>>> i = IgnoredValueConfig()
+>>> hasattr(i, '._NOTHING')
+False
+
+You can provide additional casts for types by extending the casts mapping:
+
+>>> import pathlib as p, base64
+>>> class PathConfig(TypedConfig):
+...     SOMEWHERE: p.Path = '/tmp'
+...     BIN64: bytes = 'aGVsbG8gd29ybGQ='
+>>> c = PathConfig({p.Path: p.Path, bytes: lambda s: base64.b64decode(str.encode(s))})
+>>> c.SOMEWHERE.name, c.BIN64
+('tmp', b'hello world')
 """
 
-import functools, typing as t, decouple
-
-NoneType = type(None)
-scalars = int, float, complex, bool, str, bytes, None
-optional_scalars = tuple(t.Optional[s] for s in scalars)
-lists = tuple(t.List[s] for s in scalars)
-optional_lists = tuple(t.Optional[l] for l in lists)
-optionals = optional_scalars + optional_lists
+import functools, typing as t, decouple, distutils.util
 
 
-def _cast(type_):
-    """
-    Infer the decouple.config cast argument from the type annotation.
-
-    Currently supported:
-    - primitive scalar types,
-    - lists of scalars,
-    - optional scalars
-    """
-    if type_ == bytes:
-        raise NotImplementedError
-    if type_ in scalars:
-        return type_
-    if type_ in optionals:
-        return _cast_optional(type_)
-    if type_ in lists:
-        return _cast_list(type_)
-    raise NotImplementedError(f"No inference implementation exists for {type_}")
+##
+# We need to map all supported type annotations into cast functions.
+# A cast function is a function that takes a string and returns a particular type.
+# Most primitive types in Python already do this: int('9') -> 9.
+SomeType = t.TypeVar('SomeType')
+CastType = t.Callable[[t.Optional[str]], t.Optional[SomeType]]
 
 
-def _cast_optional(type_):
-    """
-    Infer the decouple.config cast argument from the inner type annotation of an optional type.
-    """
-    just = next(_cast(a) for a in type_.__args__ if a != NoneType)
-    def cast(v):
-        if v is None:
-            return v
-        if just == bool:
-            return decouple.Config(None)._cast_boolean(val)
-        return just(v)
-    return cast
+def optional(cast: t.Callable[[str], SomeType]) -> CastType:
+    """A decorator that takes a cast function and returns an optional cast function."""
+    @functools.wraps(cast)
+    def maybe(s: t.Optional[str]) -> t.Optional[SomeType]:
+        return cast(s) if s else None
+    return maybe
 
 
-def _cast_list(type_):
-    """
-    Infer the decouple.config cast argument from the inner type annotation of a list type.
-    """
-    return decouple.Csv(type_.__args__[0])
+cast_bool = decouple.Config(None)._cast_boolean
+
+default_casts = {
+    int: int,
+    float: float,
+    complex: complex,
+    bool: cast_bool,
+    str: str,
+    bytes: str.encode,
+
+    t.List[int]: decouple.Csv(int),
+    t.List[float]: decouple.Csv(float),
+    t.List[complex]: decouple.Csv(complex),
+    t.List[bool]: decouple.Csv(cast_bool),
+    t.List[str]: decouple.Csv(str),
+    t.List[bytes]: decouple.Csv(str.encode),
+
+    t.Optional[int]: optional(int),
+    t.Optional[float]: optional(float),
+    t.Optional[complex]: optional(complex),
+    t.Optional[bool]: optional(cast_bool),
+    t.Optional[str]: optional(str),
+    t.Optional[bytes]: optional(str.encode),
+
+    t.Optional[t.List[int]]: optional(decouple.Csv(int)),
+    t.Optional[t.List[float]]: optional(decouple.Csv(float)),
+    t.Optional[t.List[complex]]: optional(decouple.Csv(complex)),
+    t.Optional[t.List[bool]]: optional(decouple.Csv(cast_bool)),
+    t.Optional[t.List[str]]: optional(decouple.Csv(str)),
+    t.Optional[t.List[bytes]]: optional(decouple.Csv(str.encode)),
+}
+
+
+def is_optional(type_: t.Type) -> bool:
+    """Return True if the given type is t.Optional[SomeType]"""
+    try:
+        orig, args = type_.__origin__, type_.__args__
+    except AttributeError:
+        return False
+    return ((orig == t.Union) and (len(args) == 2) and (type(None) in args))
 
 
 class TypedConfig(object):
@@ -137,19 +166,20 @@ class TypedConfig(object):
     Build a configuration object out of the annotations of the subclass.
     """
 
-    def __init__(self):
+    def __init__(self, casts: t.Optional[t.Mapping[SomeType, CastType]] = None) -> None:
         """
         Supply or replace the attributes of the subclass with the configured values
         according to their type annotations and defaults.
         """
+        casts = {**default_casts, **(casts or {})}
         for name, type_ in self.__annotations__.items():
             if name.startswith('_'):
                 continue
-            cfg = functools.partial(decouple.config, name, cast=_cast(type_))
+            cfg = functools.partial(decouple.config, name, cast=casts[type_])
             if hasattr(self, name):  # Subclass has a default value
                 attribute = getattr(self, name)
                 setattr(self, name, cfg(default=attribute))
-            elif type_ in optionals:  # default=None
+            elif is_optional(type_):  # default=None
                 setattr(self, name, cfg(default=None))
             else:
                 setattr(self, name, cfg())
