@@ -115,27 +115,42 @@ But can still be optional or have defaults:
 """
 ```
 
-Names starting with underscores are ignored:
+You can provide additional casts for types:
+
+```python
+>>> import pathlib as p, base64
+>>> os.environ['BIN64'] = 'aGVsbG8gd29ybGQ='
+>>> class PathConfig(TypedConfig):
+...     SOMEWHERE: p.Path = '/tmp'
+...     BIN64: bytes
+>>> c = PathConfig({p.Path: p.Path, bytes: lambda s: base64.b64decode(str.encode(s))})
+>>> c.SOMEWHERE.name, c.BIN64
+('tmp', b'hello world')
+>>>
+```
+
+Names starting with underscores are ignored.
+Names can be explicitly ignored as well.
+This is useful when you want to provide a literal or your own config manually.
 
 ```python
 >>> class IgnoredValueConfig(TypedConfig):
-...     SOMETHING: str = 'hi'
 ...     _NOTHING: int
->>> i = IgnoredValueConfig()
->>> hasattr(i, '._NOTHING')
+>>> c = IgnoredValueConfig()
+>>> hasattr(c, '_NOTHING')
 False
 >>>
 ```
 
-You can provide additional casts for types by extending the casts mapping:
+It's also the only way to cast one type two different ways.
 
 ```python
->>> import pathlib as p, base64
->>> class PathConfig(TypedConfig):
-...     SOMEWHERE: p.Path = '/tmp'
-...     BIN64: bytes = 'aGVsbG8gd29ybGQ='
->>> c = PathConfig({p.Path: p.Path, bytes: lambda s: base64.b64decode(str.encode(s))})
->>> c.SOMEWHERE.name, c.BIN64
-('tmp', b'hello world')
+>>> import decouple
+>>> class IgnoredValueConfig(TypedConfig):
+...     NORMAL_BYTES: bytes = 'hi'
+...     BIN64: bytes = decouple.config('BIN64', cast=lambda s: base64.b64decode(str.encode(s)))
+>>> c = IgnoredValueConfig(ignored_names={'BIN64'})
+>>> c.NORMAL_BYTES, c.BIN64
+(b'hi', b'hello world')
 >>>
 ```

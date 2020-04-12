@@ -80,24 +80,36 @@ But can still be optional or have defaults:
 >>> c.MAYBE_STRINGS is None, c.INTEGERS
 (True, [4, 100, 12])
 
-Names starting with underscores are ignored:
-
->>> class IgnoredValueConfig(TypedConfig):
-...     SOMETHING: str = 'hi'
-...     _NOTHING: int
->>> i = IgnoredValueConfig()
->>> hasattr(i, '._NOTHING')
-False
-
-You can provide additional casts for types by extending the casts mapping:
+You can provide additional casts for types:
 
 >>> import pathlib as p, base64
+>>> os.environ['BIN64'] = 'aGVsbG8gd29ybGQ='
 >>> class PathConfig(TypedConfig):
 ...     SOMEWHERE: p.Path = '/tmp'
-...     BIN64: bytes = 'aGVsbG8gd29ybGQ='
+...     BIN64: bytes
 >>> c = PathConfig({p.Path: p.Path, bytes: lambda s: base64.b64decode(str.encode(s))})
 >>> c.SOMEWHERE.name, c.BIN64
 ('tmp', b'hello world')
+
+Names starting with underscores are ignored.
+Names can be explicitly ignored as well.
+This is useful when you want to provide a literal or your own config manually.
+
+>>> class IgnoredValueConfig(TypedConfig):
+...     NORMAL_BYTES: bytes = 'hi'
+...     APP_PATH = p.Path(__file__).parent.absolute()
+...     _NOTHING: int
+...     BIN64: bytes = decouple.config('BIN64', cast=lambda s: base64.b64decode(str.encode(s)))
+>>> c = IgnoredValueConfig(ignored_names={'APP_PATH', 'BIN64'})
+>>> c.APP_PATH.name
+'typed-config'
+>>> hasattr(c, '_NOTHING')
+False
+
+It's also the only way to cast one type two different ways.
+
+>>> c.NORMAL_BYTES, c.BIN64
+(b'hi', b'hello world')
 """
 
 import functools, typing as t, decouple, distutils.util
@@ -166,14 +178,14 @@ class TypedConfig(object):
     Build a configuration object out of the annotations of the subclass.
     """
 
-    def __init__(self, casts: t.Optional[t.Mapping[SomeType, CastType]] = None) -> None:
+    def __init__(self, casts: t.Optional[t.Mapping[SomeType, CastType]] = None, ignored_names: t.Container[str] = ()) -> None:
         """
         Supply or replace the attributes of the subclass with the configured values
         according to their type annotations and defaults.
         """
         casts = {**default_casts, **(casts or {})}
         for name, type_ in self.__annotations__.items():
-            if name.startswith('_'):
+            if name.startswith('_') or name in ignored_names:
                 continue
             cfg = functools.partial(decouple.config, name, cast=casts[type_])
             if hasattr(self, name):  # Subclass has a default value
