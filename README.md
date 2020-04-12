@@ -1,5 +1,7 @@
 # typed-config 
 
+![Test Status Badge](https://github.com/kojiromike/typed-config/workflows/Run%20Tox%20Tests/badge.svg)
+
 ## Automatically build Python configuration structures from type annotations
 
 Define a subclass with annotations:
